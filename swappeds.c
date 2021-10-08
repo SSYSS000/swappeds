@@ -75,9 +75,8 @@ static void print_usage(FILE *file)
 
 static int is_number(const char *string)
 {
-	const char *i;
-	for (i = string; *i != '\0'; ++i) {
-		if (!isdigit(*i))
+	for (; *string != '\0'; ++string) {
+		if (!isdigit(*string))
 			return 0;
 	}
 
