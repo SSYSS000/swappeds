@@ -23,6 +23,17 @@ struct {
 
 size_t total_swap;
 
+void print_usage(FILE *file)
+{
+	fprintf(file,
+	"usage:\n %s [options]\n"
+	"options:\n"
+	" -c\tproduce total\n"
+	" -h\tshow this text\n"
+	" -n\tshow process name\n",
+	args.command);
+}
+
 int is_number(const char *string)
 {
 	const char *i;
@@ -86,16 +97,21 @@ void scan_args(int argc, char *argv[])
 
 	args.command = argv[0];
 
-	while ((opt = getopt(argc, argv, "cn")) != -1) {
+	while ((opt = getopt(argc, argv, "chn")) != -1) {
 		switch (opt) {
 		case 'c':
 			args.produce_total = 1;
+			break;
+		case 'h':
+			print_usage(stdout);
+			exit(EXIT_SUCCESS);
 			break;
 		case 'n':
 			args.append_name = 1;
 			break;
 		default:
-			exit(EXIT_FAILURE);
+			print_usage(stderr);
+		 	exit(EXIT_FAILURE);
 		}
 	}
 }
@@ -127,5 +143,5 @@ int main(int argc, char *argv[])
 	if (args.produce_total)
 		printf("Total   %7zu kB\n", total_swap);
 	
-	return 0;
+	return EXIT_SUCCESS;
 }
