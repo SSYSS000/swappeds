@@ -15,7 +15,15 @@ Download swappeds and build it:
 Run it:
 
     ./swappeds
+Sample output:
 
+    PID           SWAP	NAME
+    566	     32 kB	dbus-daemon
+    595	   1112 kB	sddm
+    744	     88 kB	polkitd
+    745	     28 kB	udisksd
+    813	    608 kB	(sd-pam)
+    Total      1868 kB
 Options:
         
     -c    produce an estimated grand total
