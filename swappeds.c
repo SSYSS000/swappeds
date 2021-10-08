@@ -31,9 +31,18 @@ SOFTWARE.
 #include <ctype.h>
 #include <unistd.h>
 
-#define eprintf(...) do {			\
-	fprintf(stderr, "%s: ", args.command);	\
-	fprintf(stderr, __VA_ARGS__);		\
+#define PROC_PATH	"/proc"
+#define FIELD_PNAME	"Name"
+#define FIELD_VMSWAP	"VmSwap"
+
+#define eprintf(...) do {						\
+		fprintf(stderr, "%s: ", args.command);			\
+		fprintf(stderr, __VA_ARGS__);				\
+	} while (0)
+
+#define DIE(code, ...) do {						\
+		eprintf(__VA_ARGS__);					\
+		exit(code);						\
 	} while (0)
 
 #define PERROR(str) \
@@ -45,20 +54,26 @@ struct {
 	unsigned append_name : 1;
 } args;
 
+struct proc_stat {
+	int pid;
+	char pname[48];
+	ssize_t vm_swap;
+};
+
 size_t total_swap;
 
-void print_usage(FILE *file)
+static void print_usage(FILE *file)
 {
 	fprintf(file,
-	"usage:\n %s [options]\n"
-	"options:\n"
-	" -c\tproduce total\n"
-	" -h\tshow this text\n"
-	" -n\tshow process name\n",
-	args.command);
+		"usage:\n %s [options]\n"
+		"options:\n"
+		" -c\tproduce total\n"
+		" -h\tshow this text\n"
+		" -n\tshow process name\n",
+		args.command);
 }
 
-int is_number(const char *string)
+static int is_number(const char *string)
 {
 	const char *i;
 	for (i = string; *i != '\0'; ++i) {
@@ -69,53 +84,74 @@ int is_number(const char *string)
 	return 1;
 }
 
-void handle_pid(int pid)
+static char *filepath_of(const char *filename, int pid)
 {
-	char buf[512], name[48];
-	int n_matched;
-	FILE *status;
-	size_t swap;
+	static char path[256];
+	int rc;
 
-	if (snprintf(buf, sizeof buf, "/proc/%d/status", pid) < 0) {
-		eprintf("snprintf failed.\n");
-		exit(EXIT_FAILURE);
-	}
-	
-	status = fopen(buf, "r");
-	if (!status) 
-		PERROR(buf);
+	rc = snprintf(path, sizeof path, "%s/%d/%s", PROC_PATH, pid, filename);
+	if (rc < 0)
+		DIE(EXIT_FAILURE, "output error\n");
+	if (rc >= sizeof path)
+		DIE(EXIT_FAILURE, "filepath too long\n");
 
-	name[0] = 0;
-	swap = 0;
-	while (fgets(buf, sizeof buf, status) != NULL) {
-		if (*name == 0 && !strncmp(buf, "Name", 4)) {
-			strcpy(name, buf+5+strspn(buf + 5, " \t"));
-			continue;
-		}
-
-		if (!strncmp(buf, "VmSwap", 6)) {
-			sscanf(buf + 7, "%zu", &swap);
-			total_swap += swap;
-			break;
-		}
-	}
-
-	if (ferror(status)) {
-		eprintf("file error\n");
-		exit(EXIT_FAILURE);
-	}
-
-	if (swap) {
-		if (args.append_name)
-			printf("%7d\t%7zu kB\t%s", pid, swap, name);
-		else
-			printf("%7d\t%7zu kB\n", pid, swap);
-	}
-
-	fclose(status);
+	return path;
 }
 
-void scan_args(int argc, char *argv[])
+static void make_proc_stat(struct proc_stat *pstat)
+{
+	char buf[512], *field_val;
+	FILE *pstatus;
+
+	pstatus = fopen(filepath_of("status", pstat->pid), "r");
+	if (!pstatus) { 
+		PERROR("cannot read process status");
+		exit(EXIT_FAILURE);
+	}
+
+	*pstat->pname = '\0';
+	pstat->vm_swap = -1;
+	while (*pstat->pname == '\0' || pstat->vm_swap == -1) {
+		if (fgets(buf, sizeof buf, pstatus) == NULL)
+			break;
+
+		if (!strncmp(buf, FIELD_PNAME, sizeof(FIELD_PNAME)-1)) {
+			field_val = buf + sizeof(FIELD_PNAME);
+			field_val += strspn(field_val, " \t");
+			strncpy(pstat->pname, field_val, sizeof(pstat->pname));
+			pstat->pname[strcspn(pstat->pname, "\n")] = '\0';
+		}
+		else if (!strncmp(buf, FIELD_VMSWAP, sizeof(FIELD_VMSWAP)-1)) {
+			field_val = buf + sizeof(FIELD_VMSWAP);
+			sscanf(field_val, "%zu", &pstat->vm_swap);
+		}
+	}
+
+	if (ferror(pstatus)) {
+		fclose(pstatus);
+		DIE(EXIT_FAILURE, "file error\n");
+	}
+
+	fclose(pstatus);
+}
+
+static void handle_pid(int pid)
+{
+	struct proc_stat pstat;
+	pstat.pid = pid;
+	make_proc_stat(&pstat);
+
+	if (pstat.vm_swap > 0) {
+		total_swap += pstat.vm_swap;
+		printf("%7d\t%7zu kB", pid, pstat.vm_swap);
+
+		if (args.append_name)
+			printf("\t%s", pstat.pname);
+		putchar('\n');
+	}
+}
+
+static void scan_args(int argc, char *argv[])
 {
 	int opt;
 
@@ -147,9 +183,9 @@ int main(int argc, char *argv[])
 
 	scan_args(argc, argv);
 
-	if ((dir = opendir("/proc")) == NULL) {
-		PERROR("cannot open /proc");
-		exit(EXIT_FAILURE);
+	if ((dir = opendir(PROC_PATH)) == NULL) {
+		PERROR("cannot open " PROC_PATH);
+		return EXIT_FAILURE;
 	}
 
 	printf("    PID       SWAP");
@@ -157,11 +193,20 @@ int main(int argc, char *argv[])
 		printf("\tNAME");
 	putchar('\n');
 
-	while (dirent = readdir(dir)) {
+	while (1) {
+		errno = 0;
+		dirent = readdir(dir); 
+		if (dirent == NULL)
+			break;
 		if (is_number(dirent->d_name))
 			handle_pid(atoi(dirent->d_name));
 	}
-	
+
+	if (!dirent && errno != 0) {
+		PERROR("cannot read " PROC_PATH);
+		return EXIT_FAILURE;
+	}
+
 	closedir(dir);
 
 	if (args.produce_total)
