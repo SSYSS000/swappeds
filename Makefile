@@ -1,5 +1,7 @@
 .PHONY: all
 
+PREFIX = /usr/local
+
 SOURCES = swappeds.c
 
 all: $(SOURCES)
