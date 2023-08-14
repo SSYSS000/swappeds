@@ -1,6 +1,6 @@
 # swappeds
 
-swappeds is a tool that gives an estimate of swapped memory per
+swappeds is a tool that gives an estimate of swapped out memory per
 process.
 
 Only Linux is currently supported.
@@ -28,7 +28,6 @@ Options:
         
     -c    produce an estimated grand total
     -h    show help
-    -n    show the name of the processes
 
 ## Install instructions
 Run `make install` and `make uninstall` to install and uninstall swappeds.

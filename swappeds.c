@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2021 SSYSS000
+Copyright (c) 2023 SSYSS000
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,131 +26,39 @@ SOFTWARE.
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
-#include <sys/types.h>
 #include <dirent.h>
-#include <ctype.h>
 #include <unistd.h>
+#include <ctype.h>
 
-#define PROC_PATH	"/proc"
-#define FIELD_PNAME	"Name"
-#define FIELD_VMSWAP	"VmSwap"
+#if !defined(__linux__)
+#warning "This system is not supported."
+#endif /* !defined(__linux__) */
 
-#define eprintf(...) do {						\
-		fprintf(stderr, "%s: ", args.command);			\
-		fprintf(stderr, __VA_ARGS__);				\
-	} while (0)
-
-#define DIE(code, ...) do {						\
-		eprintf(__VA_ARGS__);					\
-		exit(code);						\
-	} while (0)
-
-#define PERROR(str) \
-	eprintf("%s: %s\n", str, strerror(errno)) 
+#define eprintf(...)	fprintf(stderr, ##__VA_ARGS__)
 
 struct {
 	char *command;
 	unsigned produce_total : 1;
-	unsigned append_name : 1;
 } args;
 
-struct proc_stat {
+struct process_status {
 	int pid;
-	char pname[48];
-	ssize_t vm_swap;
+	char process_name[48];
+	size_t vm_swap;
 };
 
-size_t total_swap;
-
-static void print_usage(FILE *file)
+static int print_usage(FILE *file)
 {
-	fprintf(file,
-		"usage:\n %s [options]\n"
-		"options:\n"
-		" -c\tproduce total\n"
-		" -h\tshow this text\n"
-		" -n\tshow process name\n",
-		args.command);
-}
+	int n;
 
-static int is_number(const char *string)
-{
-	if (*string == '\0')
-		return 0;
-	
-	for (; *string != '\0'; ++string) {
-		if (!isdigit(*string))
-			return 0;
-	}
+	n = fprintf(file,
+			"usage:\n %s [options]\n"
+			"options:\n"
+			" -c\tproduce total\n"
+			" -h\tshow this text\n",
+			args.command);
 
-	return 1;
-}
-
-static char *filepath_of(const char *filename, int pid)
-{
-	static char path[256];
-	int rc;
-
-	rc = snprintf(path, sizeof path, "%s/%d/%s", PROC_PATH, pid, filename);
-	if (rc < 0)
-		DIE(EXIT_FAILURE, "output error\n");
-	if (rc >= sizeof path)
-		DIE(EXIT_FAILURE, "filepath too long\n");
-
-	return path;
-}
-
-static void make_proc_stat(struct proc_stat *pstat)
-{
-	char buf[512], *field_val;
-	FILE *pstatus;
-
-	pstatus = fopen(filepath_of("status", pstat->pid), "r");
-	if (!pstatus) { 
-		PERROR("cannot read process status");
-		exit(EXIT_FAILURE);
-	}
-
-	*pstat->pname = '\0';
-	pstat->vm_swap = -1;
-	while (*pstat->pname == '\0' || pstat->vm_swap == -1) {
-		if (fgets(buf, sizeof buf, pstatus) == NULL)
-			break;
-
-		if (!strncmp(buf, FIELD_PNAME, sizeof(FIELD_PNAME)-1)) {
-			field_val = buf + sizeof(FIELD_PNAME);
-			field_val += strspn(field_val, " \t");
-			strncpy(pstat->pname, field_val, sizeof(pstat->pname));
-			pstat->pname[strcspn(pstat->pname, "\n")] = '\0';
-		}
-		else if (!strncmp(buf, FIELD_VMSWAP, sizeof(FIELD_VMSWAP)-1)) {
-			field_val = buf + sizeof(FIELD_VMSWAP);
-			sscanf(field_val, "%zu", &pstat->vm_swap);
-		}
-	}
-
-	if (ferror(pstatus)) {
-		fclose(pstatus);
-		DIE(EXIT_FAILURE, "file error\n");
-	}
-
-	fclose(pstatus);
-}
-
-static void handle_pid(int pid)
-{
-	struct proc_stat pstat;
-	pstat.pid = pid;
-	make_proc_stat(&pstat);
-
-	if (pstat.vm_swap > 0) {
-		total_swap += pstat.vm_swap;
-		printf("%7d\t%7zu kB", pid, pstat.vm_swap);
-
-		if (args.append_name)
-			printf("\t%s", pstat.pname);
-		putchar('\n');
-	}
+	return n;
 }
 
 static void scan_args(int argc, char *argv[])
@@ -168,51 +76,216 @@ static void scan_args(int argc, char *argv[])
 			print_usage(stdout);
 			exit(EXIT_SUCCESS);
 			break;
-		case 'n':
-			args.append_name = 1;
-			break;
 		default:
 			print_usage(stderr);
-		 	exit(EXIT_FAILURE);
+			exit(EXIT_FAILURE);
 		}
 	}
 }
 
-int main(int argc, char *argv[])
+static int print_column_titles(void)
 {
-	struct dirent *dirent;
-	DIR *dir;
+	int n;
+	n = printf("    PID       SWAP\tNAME\n");
+	return n;
+}
 
-	scan_args(argc, argv);
+static int print_row(const struct process_status *status)
+{
+	int n;
+	n = printf("%7d\t%7zu kB\t%s\n", status->pid, status->vm_swap, status->process_name);
+	return n;
+}
 
-	if ((dir = opendir(PROC_PATH)) == NULL) {
-		PERROR("cannot open " PROC_PATH);
-		return EXIT_FAILURE;
+static char *find_not_qualifying(const char *string, int (*qualify)(int))
+{
+	while (qualify((unsigned char)*string))
+		string++;
+
+	// Caller's responsibility not to write to read-only memory.
+	return (char *)string;
+}
+
+#define find_non_digit(str) find_not_qualifying(str, isdigit)
+
+// On systems that support procfs, each process status is in a file under
+// the pid subdirectory under /proc. Hence, DIR is used to iterate over
+// the process statuses.
+typedef DIR process_status_reader_t;
+
+static process_status_reader_t *create_process_status_reader(void)
+{
+	DIR *proc;
+
+	proc = opendir("/proc");
+
+	if (!proc) {
+		perror("opendir /proc");
 	}
 
-	printf("    PID       SWAP");
-	if (args.append_name)
-		printf("\tNAME");
-	putchar('\n');
+	return (process_status_reader_t *)proc;
+}
 
-	while (1) {
-		errno = 0;
-		dirent = readdir(dir); 
-		if (dirent == NULL)
+static void destroy_process_status_reader(process_status_reader_t *dir)
+{
+	closedir((DIR *)dir);
+}
+
+static struct dirent *read_next_pid_subdir(DIR *proc)
+{
+	struct dirent *dirent;
+
+	// In the loop below, look for a pid subdirectory.
+	for (;;) {
+		errno  = 0;
+		dirent = readdir(proc); 
+
+		if (!dirent) {
+			// Directory stream ended or an error occurred.
 			break;
-		if (is_number(dirent->d_name))
-			handle_pid(atoi(dirent->d_name));
+		}
+
+		// Type should be directory or unknown if not supported.
+		if (!(dirent->d_type == DT_DIR || dirent->d_type == DT_UNKNOWN)) {
+			continue;
+		}
+
+		// Directory filename contains digits only.
+		if (*find_non_digit(dirent->d_name) != '\0') {
+			continue;
+		}
+
+		// Found a pid subdirectory.
+		break;
 	}
 
 	if (!dirent && errno != 0) {
-		PERROR("cannot read " PROC_PATH);
+		perror("readdir /proc");
+	}
+
+	return dirent;
+}
+
+static FILE *open_process_status_in_dir(const char *pid_subdir_filename)
+{
+	char path[256];
+	FILE *file;
+	int n;
+
+	// Write the file path to the process status in a buffer.
+	n = snprintf(path, sizeof path, "/proc/%s/status", pid_subdir_filename);
+
+	if (n < 0) {
+		eprintf("output error occurred while writing path to process status.\n");
+		return NULL;
+	}
+	else if (n >= sizeof path) {
+		eprintf("file path too long\n");
+		return NULL;
+	}
+
+	file = fopen(path, "r");
+
+	if (!file) {
+		perror(path);
+	}
+
+	return file;
+}
+
+static int
+next_process_status(process_status_reader_t *proc, struct process_status *status)
+{
+	int file_error, fields_not_found;
+	struct dirent *dirent;
+	FILE *proc_status_fp;
+	char line[256];
+
+	// Obtain the filename of the next PID subdirectory.
+	dirent = read_next_pid_subdir((DIR *)proc);
+
+	if (!dirent) {
+		return -1;
+	}
+
+	proc_status_fp = open_process_status_in_dir(dirent->d_name);
+
+	if (!proc_status_fp) { 
+		return -1;
+	}
+
+	// Start reading the contents into the status struct.
+	memset(status, 0, sizeof(*status));
+
+	fields_not_found = 3;
+	while (fields_not_found > 0) {
+		if (fgets(line, sizeof line, proc_status_fp) == NULL) {
+			break;
+		}
+
+		if (sscanf(line, "Name: %47s", status->process_name) == 1) {
+			fields_not_found--;
+		}
+		else if(sscanf(line, "Pid: %d", &status->pid) == 1) {
+			fields_not_found--;
+		}
+		else if (sscanf(line, "VmSwap: %zu", &status->vm_swap) == 1) {
+			fields_not_found--;
+		}
+	}
+
+	file_error = ferror(proc_status_fp);
+
+	(void) fclose(proc_status_fp);
+
+	if (file_error) {
+		eprintf("file error\n");
+		return -1;
+	}
+
+	if (fields_not_found > 0) {
+		// FIXME: not all processes have VmSwap field.
+		//eprintf("not all fields were found in status file.\n");
+	}
+
+	return 0;
+}
+
+int main(int argc, char *argv[])
+{
+	process_status_reader_t *reader;
+	struct process_status status;
+	size_t total_swap = 0;
+
+	scan_args(argc, argv);
+
+	reader = create_process_status_reader();
+
+	if (!reader) {
 		return EXIT_FAILURE;
 	}
 
-	closedir(dir);
+	if (print_column_titles() < 0) {
+		return EXIT_FAILURE;
+	}
 
-	if (args.produce_total)
-		printf("Total   %7zu kB\n", total_swap);
-	
+	while (next_process_status(reader, &status) == 0) {
+		if (status.vm_swap > 0) {
+			total_swap += status.vm_swap;
+
+			if (print_row(&status) < 0) {
+				return EXIT_FAILURE;
+			}
+		}
+	}
+
+	destroy_process_status_reader(reader);
+
+	if (args.produce_total) {
+		if (printf("Total   %7zu kB\n", total_swap) < 0) {
+			return EXIT_FAILURE;
+		}
+	}
+
 	return EXIT_SUCCESS;
 }
