@@ -1,18 +1,20 @@
 .PHONY: all
 
-PREFIX = /usr/local
+PREFIX  := /usr/local
 
-SOURCES = swappeds.c
+TARGET  := swappeds
+SOURCES := swappeds.c
+CFLAGS  := -Wall -Wextra -O3
 
 all: $(SOURCES)
-	$(CC) -O3 -o swappeds $(SOURCES)
+	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
 clean:
-	rm swappeds
+	rm $(TARGET)
 
 install: all
 	mkdir -p $(PREFIX)/bin
-	cp -f swappeds $(PREFIX)/bin
+	cp -f $(TARGET) $(PREFIX)/bin
 
 uninstall:
-	rm $(PREFIX)/swappeds
+	rm $(PREFIX)/$(TARGET)
