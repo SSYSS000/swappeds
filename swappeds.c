@@ -179,7 +179,7 @@ static FILE *open_process_status_in_dir(const char *pid_subdir_filename)
 		eprintf("output error occurred while writing path to process status.\n");
 		return NULL;
 	}
-	else if (n >= sizeof path) {
+	else if (n >= (int)sizeof path) {
 		eprintf("file path too long\n");
 		return NULL;
 	}
