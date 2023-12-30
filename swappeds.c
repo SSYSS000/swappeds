@@ -123,12 +123,12 @@ static process_status_reader_t *create_process_status_reader(void)
 		perror("opendir /proc");
 	}
 
-	return (process_status_reader_t *)proc;
+	return proc;
 }
 
 static void destroy_process_status_reader(process_status_reader_t *dir)
 {
-	closedir((DIR *)dir);
+	closedir(dir);
 }
 
 static struct dirent *read_next_pid_subdir(DIR *proc)
@@ -202,7 +202,7 @@ next_process_status(process_status_reader_t *proc, struct process_status *status
 	char line[256];
 
 	// Obtain the filename of the next PID subdirectory.
-	dirent = read_next_pid_subdir((DIR *)proc);
+	dirent = read_next_pid_subdir(proc);
 
 	if (!dirent) {
 		return -1;
