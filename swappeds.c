@@ -196,9 +196,9 @@ static FILE *open_process_status_in_dir(const char *pid_subdir_filename)
 static int
 next_process_status(process_status_reader_t *proc, struct process_status *status)
 {
-	int file_error, fields_not_found;
 	struct dirent *dirent;
 	FILE *proc_status_fp;
+	int file_error;
 	char line[256];
 
 	// Obtain the filename of the next PID subdirectory.
@@ -217,21 +217,10 @@ next_process_status(process_status_reader_t *proc, struct process_status *status
 	// Start reading the contents into the status struct.
 	memset(status, 0, sizeof(*status));
 
-	fields_not_found = 3;
-	while (fields_not_found > 0) {
-		if (fgets(line, sizeof line, proc_status_fp) == NULL) {
-			break;
-		}
-
-		if (sscanf(line, "Name: %47s", status->process_name) == 1) {
-			fields_not_found--;
-		}
-		else if(sscanf(line, "Pid: %d", &status->pid) == 1) {
-			fields_not_found--;
-		}
-		else if (sscanf(line, "VmSwap: %zu", &status->vm_swap) == 1) {
-			fields_not_found--;
-		}
+	while (fgets(line, sizeof line, proc_status_fp) != NULL) {
+		if      (sscanf(line, "Name: %47s", status->process_name) == 1) {}
+		else if (sscanf(line, "Pid: %d", &status->pid) == 1) {}
+		else if (sscanf(line, "VmSwap: %zu", &status->vm_swap) == 1) {}
 	}
 
 	file_error = ferror(proc_status_fp);
@@ -241,11 +230,6 @@ next_process_status(process_status_reader_t *proc, struct process_status *status
 	if (file_error) {
 		eprintf("file error\n");
 		return -1;
-	}
-
-	if (fields_not_found > 0) {
-		// FIXME: not all processes have VmSwap field.
-		//eprintf("not all fields were found in status file.\n");
 	}
 
 	return 0;
