@@ -271,5 +271,10 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	if (fflush(stdout) != 0) {
+		perror("Failed to flush stdout");
+		return EXIT_FAILURE;
+	}
+
 	return EXIT_SUCCESS;
 }
